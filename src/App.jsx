@@ -27,7 +27,7 @@ import ColorSelection from "./components/ColorSelection";
 import {
   playAudio,
   playAudioAndWait,
-} from "./services/audioPlayer";
+} from "./services/AudioPlayer";
 import { startDeepgram } from "./services/deepgramService";
 import { resolveMenuSelection } from "./services/menuSelection";
 

@@ -12,7 +12,7 @@ import SpeechRecognition, {
   useSpeechRecognition,
 } from "react-speech-recognition";
 
-import { playAudio } from "../services/audioPlayer";
+import { playAudio } from "../services/AudioPlayer";
 import { StockfishEngine } from "../services/stockfishEngine";
 
 function getGameMessage(chess) {

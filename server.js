@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import "dotenv/config";
 
-const PORT = Number(process.env.VOICE_SERVER_PORT || 3001);
+const PORT = Number(process.env.PORT || 3001);
 const API_KEY = process.env.DEEPGRAM_API_KEY;
 const COMMAND_KEYTERMS = [
   "human",
