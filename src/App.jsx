@@ -25,7 +25,6 @@ import DifficultySelection from "./components/DifficultySelection";
 import ColorSelection from "./components/ColorSelection";
 
 import {
-  playAudio,
   playAudioAndWait,
 } from "./services/AudioPlayer";
 import { startDeepgram } from "./services/deepgramService";
@@ -48,15 +47,44 @@ export default function App() {
   const recognitionRef = useRef(null);
   const voiceCleanupRef = useRef(() => {});
   const isListeningRef = useRef(false);
-  const voiceTransitionTimeoutRef = useRef(null);
   const recentSelectionsRef = useRef(new Map());
   const listenerVersionRef = useRef(0);
+  const menuTransitionVersionRef = useRef(0);
+  const menuSelectionLockRef = useRef(null);
+  const menuTimingOriginRef = useRef(0);
+
+  useEffect(() => {
+    menuTimingOriginRef.current = Date.now();
+  }, []);
+
+  const logMenuTiming = useCallback((stage, details = {}) => {
+    const elapsed = Date.now() - menuTimingOriginRef.current;
+    console.log(`[menu-flow +${elapsed}ms] ${stage}`, details);
+  }, []);
 
   useEffect(() => {
     screenRef.current = screen;
     recentSelectionsRef.current.clear();
     lastHandledCommandRef.current = "";
   }, [screen]);
+
+  const advanceScreenAfterAudio = useCallback(async (nextScreen, audioName) => {
+    const transitionVersion = ++menuTransitionVersionRef.current;
+
+    logMenuTiming("menu-transition-start", { nextScreen, audioName });
+
+    if (audioName) {
+      await playAudioAndWait(audioName);
+    }
+
+    if (menuTransitionVersionRef.current !== transitionVersion) {
+      logMenuTiming("menu-transition-stale", { nextScreen, audioName });
+      return;
+    }
+
+    logMenuTiming("menu-screen-change", { nextScreen, audioName });
+    setScreen(nextScreen);
+  }, [logMenuTiming]);
 
   const handleVoiceCommand = useCallback(
     (commandText, { allowFuzzy = true } = {}) => {
@@ -82,12 +110,34 @@ export default function App() {
 
       const command = selection.match.command;
       lastHandledCommandRef.current = `${currentScreen}:${command}`;
+      logMenuTiming("menu-command-processed", {
+        screen: currentScreen,
+        command,
+        matchedBy: selection.match.matchedBy,
+      });
+
+      const selectMenuOption = (nextScreen, audioName, stateSetter) => {
+        if (menuSelectionLockRef.current) {
+          logMenuTiming("menu-command-ignored-while-locked", {
+            screen: currentScreen,
+            command,
+            lock: menuSelectionLockRef.current,
+          });
+          return;
+        }
+
+        menuSelectionLockRef.current = nextScreen;
+        stateSetter();
+        void advanceScreenAfterAudio(nextScreen, audioName).finally(() => {
+          menuSelectionLockRef.current = null;
+        });
+      };
 
       if (currentScreen === "opponent") {
         if (command === "human") {
-          setSelectedOpponent("human");
-          playAudio("humanSelected");
-          setScreen("mode");
+          selectMenuOption("mode", "humanSelected", () => {
+            setSelectedOpponent("human");
+          });
           return;
         }
 
@@ -100,16 +150,16 @@ export default function App() {
 
       if (currentScreen === "mode") {
         if (command === "voice") {
-          setSelectedMode("voice");
-          playAudio("voiceModeSelected");
-          setScreen("color");
+          selectMenuOption("color", "voiceModeSelected", () => {
+            setSelectedMode("voice");
+          });
           return;
         }
 
         if (command === "mouse") {
-          setSelectedMode("mouse");
-          playAudio("mouseModeSelected");
-          setScreen("color");
+          selectMenuOption("color", "mouseModeSelected", () => {
+            setSelectedMode("mouse");
+          });
           return;
         }
       }
@@ -136,26 +186,24 @@ export default function App() {
 
       if (currentScreen === "color") {
         if (command === "white") {
-          setSelectedColor("white");
-          playAudio("gameStarted");
-          setScreen("playing");
+          selectMenuOption("playing", "gameStarted", () => {
+            setSelectedColor("white");
+          });
           return;
         }
 
         if (command === "black") {
-          setSelectedColor("black");
-          playAudio("gameStarted");
-          setScreen("playing");
+          selectMenuOption("playing", "gameStarted", () => {
+            setSelectedColor("black");
+          });
           return;
         }
       }
-    },
-    []
+    }, [advanceScreenAfterAudio, logMenuTiming]
   );
 
   useEffect(() => {
     if (screen === "playing") {
-      setDisplayMessage("");
       return;
     }
 
@@ -165,12 +213,11 @@ export default function App() {
       const isPlaying = Boolean(event.detail?.isPlaying);
 
       if (isPlaying) {
+        logMenuTiming("audio-finished-state=playing", {
+          screen: screenRef.current,
+        });
         setVoiceUiState("speaking");
         setDisplayMessage("Please wait while I finish speaking.");
-        if (voiceTransitionTimeoutRef.current) {
-          window.clearTimeout(voiceTransitionTimeoutRef.current);
-          voiceTransitionTimeoutRef.current = null;
-        }
         return;
       }
 
@@ -178,18 +225,15 @@ export default function App() {
         return;
       }
 
+      logMenuTiming("audio-finished-restart-listening", {
+        screen: screenRef.current,
+      });
       setVoiceUiState("preparing");
       setDisplayMessage("I'm getting ready to listen. Please wait...");
-      if (voiceTransitionTimeoutRef.current) {
-        window.clearTimeout(voiceTransitionTimeoutRef.current);
+      if (!cancelled) {
+        setVoiceUiState("listening");
+        setDisplayMessage("Microphone is active and ready for your voice.");
       }
-
-      voiceTransitionTimeoutRef.current = window.setTimeout(() => {
-        if (!cancelled) {
-          setVoiceUiState("listening");
-          setDisplayMessage("Microphone is active and ready for your voice.");
-        }
-      }, 3000);
     };
 
     window.addEventListener("voice-audio-state", handleAudioState);
@@ -225,6 +269,9 @@ export default function App() {
       }
 
       browserListenerStarted = true;
+      logMenuTiming("browser-listening-start-requested", {
+        screen: screenRef.current,
+      });
 
       if (!SpeechRecognitionCtor) {
         console.warn(
@@ -277,6 +324,11 @@ export default function App() {
           return;
         }
 
+        logMenuTiming("speech-recognized", {
+          source: "browser",
+          text: commandText,
+          final: allowFuzzy,
+        });
         setHeardText(commandText);
         handleVoiceCommand(commandText, {
           allowFuzzy,
@@ -322,6 +374,11 @@ export default function App() {
           return;
         }
 
+        logMenuTiming("speech-recognized", {
+          source: "deepgram",
+          text: commandText,
+          final: transcript.isFinal,
+        });
         setHeardText(commandText);
         handleVoiceCommand(commandText, {
           // Alias/exact command matches can be accepted immediately. Fuzzy
@@ -341,11 +398,15 @@ export default function App() {
         browserStream?.getTracks().forEach((track) => track.stop());
       };
       isListeningRef.current = true;
+      logMenuTiming("deepgram-listening-started", {
+        screen: screenRef.current,
+      });
     };
 
     const announceOptionsThenListen = async () => {
       for (const prompt of prompts[screen] || []) {
         stopActiveListener();
+        logMenuTiming("menu-prompt-awaiting-audio", { prompt, screen });
         await playAudioAndWait(prompt);
 
         if (cancelled) {
@@ -353,10 +414,12 @@ export default function App() {
         }
 
         if (screen === "welcome") {
+          logMenuTiming("welcome-complete-advance", { nextScreen: "opponent" });
           setScreen("opponent");
           return;
         }
 
+        logMenuTiming("menu-prompt-audio-ended", { prompt, screen });
         startVoiceListener();
       }
     };
@@ -365,14 +428,10 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      if (voiceTransitionTimeoutRef.current) {
-        window.clearTimeout(voiceTransitionTimeoutRef.current);
-        voiceTransitionTimeoutRef.current = null;
-      }
       window.removeEventListener("voice-audio-state", handleAudioState);
       stopActiveListener();
     };
-  }, [screen, handleVoiceCommand]);
+  }, [logMenuTiming, screen, handleVoiceCommand]);
 
   const voiceStateConfig = {
     speaking: {

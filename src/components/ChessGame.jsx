@@ -40,11 +40,72 @@ function getGameMessage(chess) {
   return chess.isCheck() ? `${sideToMove} to move — check` : `${sideToMove} to move`;
 }
 
+function getCapturedPieces(moves) {
+  const whiteCaptured = [];
+  const blackCaptured = [];
+
+  moves.forEach((move) => {
+    if (!move.captured) {
+      return;
+    }
+
+    const capturedPiece = move.captured.toLowerCase();
+    const pieceSymbol = {
+      p: "♟",
+      r: "♜",
+      n: "♞",
+      b: "♝",
+      q: "♛",
+      k: "♚",
+    }[capturedPiece] || "•";
+
+    if (move.color === "w") {
+      blackCaptured.push(pieceSymbol);
+    } else {
+      whiteCaptured.push(pieceSymbol);
+    }
+  });
+
+  return {
+    white: whiteCaptured,
+    black: blackCaptured,
+  };
+}
+
 export default function ChessGame({
   opponent,
   difficulty,
   color,
 }) {
+  const boardOrientation = color === "black" ? "black" : "white";
+  const CoordinateSquare = useCallback(({
+    children,
+    ref,
+    square,
+    squareColor,
+    style,
+  }) => {
+    return (
+      <div
+        ref={ref}
+        style={{
+          ...style,
+          position: "relative",
+          overflow: "hidden",
+        }}
+        className={`board-square board-square-${squareColor}`}
+      >
+        <span
+          aria-hidden="true"
+          className={`board-square-coordinate board-square-coordinate-${squareColor}`}
+        >
+          {square.toUpperCase()}
+        </span>
+        {children}
+      </div>
+    );
+  }, []);
+
   const [game, setGame] = useState(
     new Chess()
   );
@@ -85,41 +146,25 @@ export default function ChessGame({
   const engineRef = useRef(null);
   const aiRequestRef = useRef(0);
   const [engineReady, setEngineReady] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const humanColor = color === "black" ? "b" : "w";
   const aiColor = humanColor === "w" ? "b" : "w";
 
   const gameInfo = useMemo(() => {
-    const history = game.history();
+    const history = game.history({ verbose: true });
     const turn = game.turn() === "w" ? "White" : "Black";
-    const lastMove = history.length > 0 ? history[history.length - 1] : "—";
-    const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
-    const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+    const lastMove = history.length > 0
+      ? `${history[history.length - 1].from} → ${history[history.length - 1].to}`
+      : "—";
 
     return {
       turn,
       lastMove,
-      time: `${minutes}:${seconds}`,
     };
-  }, [elapsedSeconds, game]);
+  }, [game]);
 
   useEffect(() => {
     gameRef.current = game;
   }, [game]);
-
-  useEffect(() => {
-    const timerId = window.setInterval(() => {
-      if (gameRef.current.isGameOver()) {
-        return;
-      }
-
-      setElapsedSeconds((seconds) => seconds + 1);
-    }, 1000);
-
-    return () => {
-      window.clearInterval(timerId);
-    };
-  }, []);
 
   useEffect(() => {
     if (opponent !== "computer") {
@@ -268,7 +313,6 @@ export default function ChessGame({
 
     setGame(newChess);
     gameRef.current = newChess;
-    setElapsedSeconds(0);
 
     setHistory([]);
 
@@ -446,32 +490,7 @@ export default function ChessGame({
     }
   }, [finalTranscript, handleVoiceCommand, interimTranscript, resetTranscript, transcript]);
   const capturedPieces = useMemo(() => {
-    const whiteCaptured = [];
-    const blackCaptured = [];
-
-    game.history({ verbose: true }).forEach((move) => {
-      if (!move.captured) {
-        return;
-      }
-
-      const capturedPiece = move.captured.toLowerCase();
-      const pieceSymbol = {
-        p: "♟",
-        r: "♜",
-        n: "♞",
-        b: "♝",
-        q: "♛",
-        k: "♚",
-      }[capturedPiece] || "•";
-
-      if (move.color === "w") {
-        blackCaptured.push(pieceSymbol);
-      } else {
-        whiteCaptured.push(pieceSymbol);
-      }
-    });
-
-    return { white: whiteCaptured, black: blackCaptured };
+    return getCapturedPieces(game.history({ verbose: true }));
   }, [game]);
 
   return (
@@ -499,7 +518,8 @@ export default function ChessGame({
 
         <div className="board-frame">
           <Chessboard
-            boardOrientation={color === "black" ? "black" : "white"}
+            customSquare={CoordinateSquare}
+            boardOrientation={boardOrientation}
             position={game.fen()}
             onPieceDrop={onDrop}
           />
@@ -509,19 +529,19 @@ export default function ChessGame({
           <div className="game-info-card">
             <div className="game-info-title">Game Info</div>
 
+            <div className="game-info-summary">
+              <span>{color === "black" ? "Black (You)" : "White (You)"}</span>
+              <span>{opponent === "computer" ? `AI · ${difficulty || "Medium"}` : "Human"}</span>
+            </div>
+
             <div className="game-info-row">
               <span>Turn</span>
               <strong>{gameInfo.turn}</strong>
             </div>
 
             <div className="game-info-row">
-              <span>Move</span>
+              <span>Last Move</span>
               <strong>{gameInfo.lastMove}</strong>
-            </div>
-
-            <div className="game-info-row">
-              <span>Time</span>
-              <strong>{gameInfo.time}</strong>
             </div>
           </div>
 

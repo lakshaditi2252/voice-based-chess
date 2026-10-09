@@ -38,6 +38,11 @@ let audioQueue = [];
 let isPlaying = false;
 let isAudioPlaybackActive = false;
 
+function logAudioTiming(stage, details = {}) {
+  const elapsed = Math.round(performance.now());
+  console.log(`[audio-flow +${elapsed}ms] ${stage}`, details);
+}
+
 function updateAudioPlaybackState(nextState) {
   if (isAudioPlaybackActive === nextState) {
     return;
@@ -73,6 +78,7 @@ function enqueueAudio(name, onComplete = () => {}) {
   }
 
   audioQueue.push({ file, onComplete });
+  logAudioTiming("audio-queued", { name, queueLength: audioQueue.length });
 
   if (!isAudioPlaybackActive) {
     updateAudioPlaybackState(true);
@@ -96,13 +102,17 @@ function playNextAudio() {
 
   const audio = new Audio(file);
 
+  logAudioTiming("audio-playback-start", { file, remainingQueueLength: audioQueue.length });
+
   audio.onended = () => {
+    logAudioTiming("audio-playback-end", { file });
     onComplete();
     playNextAudio();
   };
 
   audio.play().catch((err) => {
     console.error(err);
+    logAudioTiming("audio-playback-error", { file, error: String(err) });
     onComplete();
     playNextAudio();
   });
